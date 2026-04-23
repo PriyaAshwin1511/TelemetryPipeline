@@ -1,0 +1,344 @@
+Note :
+
+The AI responses are truncated for better readability.
+
+1. AI assitance was used in several phases of development - planning , design , application code development, test case coding, documentation. 
+2. All the md files under /documentation are AI assisted except AI_prompts.txt
+3. The code was reviewed by the AI tool multiple times based on the below parameters 
+- Compliance with design 
+- Error handling and logging
+- Clean , idiomatic Go. 
+- Documentation. 
+4. The biggest challenge faced was during the test case generation. Initially , AI was not able to acheive more than 30% coverage even after repeated review. However , generating the tests
+for each service in a separate session helped acheive the target of ~70-80% of code coverage. 
+5. At various stages of development, conscious decision was made to avoid "analysis paralysis". With the help of AI, it is easy to get stuck in the vicious cycle of continuous 
+improvement to make the system better. Had to take hard decisions at various stages to stop improving the product and move them to future improvements section.
+6. Kustomize was chosen over Helm for initial implementation after analyzing the complexities of Helm with AI assitance
+
+
+Step 1 : After analyzing the best ways to write a prompt for AI, used the below prompt for initial planning 
+
+High-Level Requirement
+Design a production-grade telemetry pipeline in Golang that simulates real-time GPU data ingestion. 
+The system must utilize a custom-built messaging layer to decouple producers from consumers, persist data to an open-source database, and provide a RESTful API for telemetry retrieval
+
+Inputs
+* Data Source: Telemetry data provided via CSV
+* Database: Any open-source database (e.g., PostgreSQL)
+* Infrastructure: Kubernetes environment managed via Kustomize
+* Tooling: Makefile for task automation (testing, OpenAPI generation)
+
+Use Case
+* Streamer: Reads CSV in a loop to simulate a continuous stream and produces to the MQ
+* MQ Service: A custom library or service (not Kafka/RabbitMQ) facilitating communication
+* Collector: Consumes from the MQ, parses the data, and persists it
+* API Gateway: Exposes endpoints for listing unique GPU IDs and querying telemetry by ID and time-window
+
+Priority Rules
+* Strict Custom MQ: No existing MQ frameworks; the implementation must be original
+* Scalability: Both Streamers and Collectors must support independent horizontal scaling up to 10 instances
+* Documentation First: Auto-generated Swagger/OpenAPI spec via Makefile and a comprehensive README.
+* Testing Rigor: Mandatory unit and integration tests executed via Makefile.
+
+Non-Functional Requirements
+* Elasticity: Dynamic scale-up/down capabilities for processing components.
+* Performance & Availability: High-throughput message handling and stable system uptime.
+* Observability: Integrated logging and error handling to track system health.
+* Extensibility: Modular design to allow for future enhancements.
+
+
+AI response ( truncated):
+
+I'll help you plan this telemetry streaming system project. Let me create a TODO list to track the planning process and then ask some clarifying questions.
+
+I need to clarify several aspects of the project before creating a detailed plan:
+
+**Message Queue Implementation:**
+- Should I build a custom in-memory queue library from scratch in Go, or use a lightweight existing Go queue library (like channel-based, ring buffer, etc.)?
+- What queue features are needed (message persistence, ordering, acknowledgment, retry logic)?
+
+**Database Choice:**
+- Which database would you prefer? Options: PostgreSQL, MongoDB, SQLite, Redis, or another?
+- This affects schema design and query patterns for the time-range queries.
+
+**CSV Telemetry Format:**
+- What's the CSV structure? What columns does it contain (e.g., timestamp, device_id, metrics)?
+- Can you provide a sample CSV format or should I define a standard telemetry schema?
+
+**Streaming Behavior:**
+- What's the expected streaming rate? How fast should rows be sent from the CSV loop?
+- Should the streaming simulate real-time based on timestamps or just send as fast as possible?
+
+**Scaling Approach:**
+- Should scaling be achieved via Kubernetes Horizontal Pod Autoscaler (HPA)?
+- How should multiple streamer/collector instances coordinate (partitioning by device_id, round-robin, etc.)?
+
+**API Gateway Design:**
+- Is the API Gateway a separate microservice or integrated with the collector?
+- What Go web framework should be used (Gin, Echo, standard library, etc.)?
+
+-----
+
+
+Step 2 : Several design cycles were spent to design the Message queue . In each response from AI , several MQ options with pros and cons were listed . Not including the full response here for better readability 
+
+
+Prompt : 
+
+Lets go one by one. Message queue Should I build a custom in-memory queue library from scratch in Go, or use a lightweight existing Go queue library (like channel-based, ring buffer, etc.)? - what are the pros and cons of each. And ignore 10 minutes testing constraint. This is to hint that setup need not run forever. Once started, the user will let it run for ten mins or so and test and stop. CSV file format col details - timestamp, metric_name, gpu_id,device, uuid, modelname,hostname. container, pod, namespace, value,labels_raw Here labels is a key value pair separated by commas. container, pod, namespace, do not have values
+
+AI response ( truncated) :
+
+Recommendation: Use a lightweight existing library like:
+
+github.com/streadway/amqp (if you want AMQP-like semantics)
+github.com/Shopify/sarama (Kafka-like)
+Simple channel-based queue with github.com/eapache/channels
+Or a Go-native ring buffer like github.com/golang-collections/collections/ring
+Given the project scope and requirement for a "new library or service" (not existing MQs like Kafka/RabbitMQ), I'd recommend building a custom in-memory
+
+Prompt:
+
+Given the project scope and requirement for a "new library or service" (not existing MQs like Kafka/RabbitMQ), I'd recommend building a custom in-memory queue using Go channels with a thin wrapper for: Producer/consumer pattern Backpressure handling Basic metrics Thread safety This balances control with simplicity. where will the data be stored ? In memory ?
+
+
+AI response ( truncated):
+
+Recommendation: Pure In-Memory with Go channels
+
+Simplest and fastest
+Acceptable data loss for testing scenarios
+Easy to scale horizontally (multiple queue instances if needed)
+Can add backpressure when channel is full
+Which approach would you prefer?
+
+
+Prompt:
+
+Evaluate the options based on scale,availability and performance. Should be able to handle 10 instances of streamer / collector
+
+
+AI response ( truncated):
+
+Which approach would you prefer: Distributed Queue Service or Multiple Independent Queues?
+
+Prompt :
+
+Distributed Queue Service This is better. Eventually collector is going to persist in the database. Data should not be lost. Latency can be tolerated. Should be available. Will there be a separate queue service for each collector/streamer
+
+
+**Recommendation: Write-Ahead Log (WAL) + In-Memory**
+- Best balance of performance and durability
+- Latency acceptable (you mentioned it can be tolerated)
+- Proven pattern (used by Kafka, databases)
+- Can be implemented in Go without external dependencies
+
+**Architecture:**
+```
+10 Streamers → [Queue Service (WAL + Memory)] → 10 Collectors → Database
+```
+
+Does this architecture work for you?
+
+Prompt :
+
+Write-Ahead Log (WAL) + In-Memory - what are the issues with this approach ? Will this be scalable , fault tolerant , no data loss , able to support multiple consumers, no data duplication ?
+
+
+AI response (truncated):
+
+**Recommended Approach for Your Project:**
+
+**Raft-based Consensus Queue (using Hashicorp Raft library)**
+- 3 or 5 replicas for quorum
+- Built-in leader election and log replication
+- Strong consistency guarantees
+- Proven pattern (used by Consul, etcd alternatives)
+- Go libraries available: `github.com/hashicorp/raft`
+
+**Simpler Alternative:**
+**Single Leader + 2 Followers with WAL Replication**
+- Custom replication logic
+- Simpler than full Raft
+- Good enough for 10-minute testing + production use
+
+Which approach would you prefer: **Full Raft consensus** or **Simpler leader-follower replication**?
+
+Prompt :
+
+Recommendation: Option 1 - Single Queue Service with WAL What are the pros , cons , scope for extension ?
+
+AI response (truncated):
+
+This approach gives you a solid foundation that can evolve. The initial simplicity allows you to focus on other components (streamer, collector, API) and add complexity only when needed.
+
+Does this approach work for you? Ready to proceed with the remaining clarifying questions?
+
+Prompt :
+
+Option 3: Partitioned Independent Queues pros, cons, scope for extenions, How to fix the cons 
+
+AI response (truncated):
+
+**Recommended Implementation:**
+
+**Start with 3 partitions using consistent hashing:**
+- Each partition has WAL for durability
+- Kubernetes Service discovery for collectors
+- Prometheus metrics for monitoring
+- Add replication per partition if data loss is critical
+
+Prompt :
+
+To promote this to a production grade system, what is your suggestion
+
+
+Option 3: Append-Only File Storage
+
+Messages appended to file
+Simple file-based queue
+Easy to implement
+Good performance with sequential writes
+
+
+**Implementation Plan for Option 3:**
+
+**Phase 1 (MVP - Current Project):**
+- 3 partitions with consistent hashing
+- WAL per partition
+- Basic metrics
+- Health checks
+
+**Comparison Across Criteria:**
+
+| Criteria | Single Queue | Partitioned Queues |
+|----------|-------------|-------------------|
+| **Fault Tolerance** | ❌ Single point of failure | ✅ Partial availability (one partition down ≠ system down) |
+| **Scalability** | ❌ Limited to single instance | ✅ Horizontal scaling by adding partitions |
+| **Availability** | ❌ Queue down = system down | ✅ Some partitions up = partial service |
+| **Scope for Improvement** | ⚠️ Requires redesign to scale | ✅ Can add replication, rebalancing, etc. |
+| **Minimal Arch Change to Production** | ❌ Needs complete redesign for HA | ✅ Add replication per partition (same arch) |
+| **No Data Loss** | ✅ Append-only file ensures durability | ✅ Append-only file per partition ensures durability |
+| **Multiple Producer Instances** | ✅ Supported (concurrent writes) | ✅ Supported (write to specific partition) |
+| **Multiple Consumer Instances** | ✅ Supported (consumer groups) | ✅ Supported (consumer groups per partition) |
+
+**Winner: Partitioned Queues**
+
+---------------
+
+Step 3:
+
+Database was chosen to be PostgreSQL by discussing the pros and cons of other options like a pure NOSQL database and a pure SQL database.
+ Also considered the future requirement of querying by labels in the database design as changing the database is not as easy making changes in the other components
+
+ 
+ Prompt:
+ 
+  Database for Telemetry Storage: - Since the APIs need the complete records only and no filtering based on labels. is postgres better ? If there is a requirement to query based on labels will postgresql work fine ?
+
+  
+  AI response: ( truncated) 
+  
+  **PostgreSQL will work fine for label queries** with JSONB. This is a proven pattern used in production systems.
+
+  
+  Why JSONB for Labels:
+
+Flexible: Different records can have different label keys
+Queryable: Can search by label values
+Indexed: GIN index makes label queries fast
+No schema changes: Add new label keys without altering table
+
+
+----
+
+Step 4 :
+
+API framework was chosen between Gin and Echo. 
+
+prompt : 
+
+Which f/w is production grade . No over kill. no high latency 
+
+AI response ( truncated):
+
+API Framework Comparison:
+Framework	Production-Grade	Overkill	Latency	Dependencies
+Gin	✅ Yes (widely used)	⚠️ Slightly more features	✅ Very low	1 (Gin)
+Echo	✅ Yes (production-ready)	✅ Minimalist	✅ Very low	1 (Echo)
+Standard library	✅ Yes (foundation)	✅ Not overkill	✅ Lowest	0
+
+Gin is the best choice because:
+
+Proven at scale: Used by companies processing millions of requests
+Best ecosystem: Largest middleware and plugin ecosystem
+Enterprise adoption: Widely used in production
+Future-proof: Will grow with your system
+Community support: Easy to find help and resources
+Production features: Built-in Swagger, Prometheus, validation
+For your specific use case:
+
+Simple APIs now, but Gin supports future complexity
+Excellent integration with PostgreSQL, Prometheus, Kubernetes
+Best long-term investment
+Decision: Switch to Gin
+
+
+-------------
+
+Other design decisions ( Highlighting the main ones )
+
+prompt :
+
+Is connection pooling expensive ? Do we need to use channels instead of connections ? - Like in RabbitMQ
+
+
+AI response (truncated):
+
+**For Your HTTP-Based Queue:**
+- HTTP is stateless, each request is independent
+- Connection pooling is handled by Go's http.Client
+- No need for channel abstraction
+- Simpler and more efficient
+
+**Recommendation:**
+Use Go's built-in connection pooling (http.Client and database/sql). No need to implement a channel-like abstraction. This is standard, efficient, and well-tested.
+
+
+Prompt :
+
+ gRPC (rejected - more complex than HTTP, not needed for current use case). - isnt grpc faster than http ? 
+
+ 
+AI response ( truncated) :
+
+**Yes, gRPC is generally faster than HTTP/1.1:**
+
+
+**Recommendation for Your Use Case:**
+HTTP is the pragmatic choice. If performance becomes an issue, you can:
+1. Add HTTP/2 support (simple configuration change)
+2. Optimize JSON serialization
+3. Consider gRPC for specific hot paths later
+
+
+prompt:
+
+No, context is not used for cancellation in this code.
+
+AI response ( truncated):
+
+**Trade-offs:**
+- **Current:** Simpler, works for this use case
+- **Context:** More idiomatic Go, supports timeouts and hierarchical cancellation, better for complex shutdown scenarios
+
+For this system, the signal-based approach is sufficient since it's a simple graceful shutdown without complex cancellation needs.
+
+prompt :
+
+Collector was crashing because postgresql was not available when collector starts. Fix this.
+
+Solution implemented:
+
+Initially AI suggested to use a Job . However after careful analysis, AI was instructed to implement an init container. 
+ 

@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue-service
+  labels:
+    app: queue-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: queue-service
+  template:
+    metadata:
+      labels:
+        app: queue-service
+        environment: dev
+    spec:
+      containers:
+      - name: queue
+        image: telemetry-collector:v1.1
+        imagePullPolicy: IfNotPresent
+        command: ["./queue"]
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: queue-data
+          mountPath: /app/data/queue
+        env:
+        - name: TELEMETRY_QUEUE_DATA_DIR
+          value: "/app/data/queue"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 20
+      volumes:
+      - name: queue-data
+        # TODO: Replace emptyDir with PersistentVolumeClaim for production persistence
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: queue-service
+spec:
+  selector:
+    app: queue-service
+  ports:
+  - protocol: TCP
+    port: 8080
+    targetPort: 8080

@@ -1,0 +1,84 @@
+info:
+  contact: {}
+paths:
+  /api/v1/gpus:
+    get:
+      consumes:
+      - application/json
+      description: Returns a list of all unique GPU UUIDs in the telemetry data
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: List all unique GPU UUIDs
+      tags:
+      - gpus
+  /api/v1/gpus/{id}/telemetry:
+    get:
+      consumes:
+      - application/json
+      description: Returns telemetry records for a specific GPU UUID, optionally filtered
+        by time range and pagination
+      parameters:
+      - description: GPU UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Start time in RFC3339 format
+        in: query
+        name: start_time
+        type: string
+      - description: End time in RFC3339 format
+        in: query
+        name: end_time
+        type: string
+      - default: 1
+        description: 'Page number (default: 1)'
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - default: 100
+        description: 'Number of records per page (default: 100, max: 1000)'
+        in: query
+        maximum: 1000
+        minimum: 1
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get telemetry data for a specific GPU UUID
+      tags:
+      - gpus
+swagger: "2.0"

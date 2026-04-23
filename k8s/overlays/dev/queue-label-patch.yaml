@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue-service
+spec:
+  selector:
+    matchLabels:
+      app: queue-service
+  template:
+    metadata:
+      labels:
+        app: queue-service

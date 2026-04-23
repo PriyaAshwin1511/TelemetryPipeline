@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: streamer
+  labels:
+    app: streamer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: streamer
+  template:
+    metadata:
+      labels:
+        app: streamer
+        environment: dev
+    spec:
+      initContainers:
+      - name: wait-for-queue
+        image: alpine:latest
+        command:
+        - sh
+        - -c
+        - |
+          apk add --no-cache curl
+          until curl -f http://queue-service:8080/health; do
+            echo "waiting for queue-service"
+            sleep 2
+          done
+      containers:
+      - name: streamer
+        image: telemetry-collector:v1.1
+        imagePullPolicy: IfNotPresent
+        command: ["./streamer"]
+        env:
+        - name: TELEMETRY_QUEUE_ENDPOINT
+          value: "http://queue-service:8080/produce"
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "200m"

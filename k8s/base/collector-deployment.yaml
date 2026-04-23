@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collector
+  labels:
+    app: collector
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: collector
+  template:
+    metadata:
+      labels:
+        app: collector
+        environment: dev
+    spec:
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15-alpine
+        command:
+        - sh
+        - -c
+        - |
+          until pg_isready -h postgres-service -p 5432; do
+            echo "waiting for postgres"
+            sleep 2
+          done
+      - name: migration
+        image: postgres:15-alpine
+        env:
+        - name: POSTGRES_HOST
+          value: "postgres-service"
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: database
+        command:
+        - sh
+        - -c
+        - |
+          echo "Running migration..."
+          PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER -d $POSTGRES_DB << 'EOF'
+          CREATE TABLE IF NOT EXISTS telemetry (
+              id SERIAL PRIMARY KEY,
+              timestamp TIMESTAMP NOT NULL,
+              metric_name VARCHAR NOT NULL,
+              gpu_id VARCHAR,
+              device VARCHAR,
+              uuid VARCHAR NOT NULL,
+              model_name VARCHAR,
+              hostname VARCHAR,
+              container VARCHAR,
+              pod VARCHAR,
+              namespace VARCHAR,
+              value NUMERIC NOT NULL,
+              labels JSONB
+          );
+          
+          CREATE INDEX IF NOT EXISTS idx_uuid_timestamp ON telemetry(uuid, timestamp);
+          
+          COMMENT ON TABLE telemetry IS 'Telemetry data from GPU metrics';
+          EOF
+          
+          echo "Migration completed successfully"
+      containers:
+      - name: collector
+        image: telemetry-collector:v1.1
+        imagePullPolicy: IfNotPresent
+        command: ["./collector"]
+        env:
+        - name: TELEMETRY_QUEUE_ENDPOINT
+          value: "http://queue-service:8080"
+        - name: TELEMETRY_COLLECTOR_CONSUMER_GROUP_ID
+          value: "default-collector"
+        - name: TELEMETRY_DATABASE_HOST
+          value: "postgres-service"
+        - name: TELEMETRY_DATABASE_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: username
+        - name: TELEMETRY_DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        - name: TELEMETRY_DATABASE_DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: database
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
